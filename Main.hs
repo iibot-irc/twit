@@ -1,7 +1,7 @@
-{-# LANGUAGE OverloadedStrings, DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import Control.Monad.IO.Class
-import Data.ByteString.Lazy (ByteString,fromStrict)
+import Data.ByteString.Lazy (fromStrict)
 import Data.ByteString.Char8 (pack)
 import Network.HTTP.Conduit
 import Network
@@ -10,9 +10,7 @@ import Web.Authenticate.OAuth
 import Data.Aeson
 import Data.Conduit
 import Data.Maybe
-import Data.Time.Clock (UTCTime)
 import Data.Text (Text)
-import GHC.Generics
 import Control.Applicative
 
 data Tweet =
@@ -35,7 +33,7 @@ instance FromJSON User where
         User <$> t .: "name" 
              <*> t .: "id"
     
-
+userStream :: (OAuth, Credential) -> [String] -> IO ()
 userStream (oauth,cred) users = do
     userIds <- getUserIds (oauth,cred) users 
     print userIds
@@ -46,6 +44,7 @@ userStream (oauth,cred) users = do
         response <- http signedreq m
         responseBody response $$+- printStream
 
+getUserIds :: (OAuth, Credential) -> [String] -> IO [String]
 getUserIds (oauth,cred) users = do 
     usersRes <- withSocketsDo $ do
         req <- parseUrl $ "https://api.twitter.com/1.1/users/lookup.json?screen_name=" ++ concatMap (++",") users
@@ -54,18 +53,18 @@ getUserIds (oauth,cred) users = do
     let usersBody = responseBody usersRes
     return $ map (show . Main.id) $ maybe [] catMaybes (decode usersBody :: Maybe [Maybe User])
 
-printStream = do
+printStream =
     awaitForever $ \str-> do
-        let mTweet = (decode (fromStrict str) :: Maybe Tweet)
+        let mTweet = decode (fromStrict str) :: Maybe Tweet
         case mTweet of
             Nothing -> return () 
             Just tweet -> liftIO $ print tweet
 
 main :: IO ()
 main = do
-    args <- getArgs
+    consumerKey : consumerSecret : accessToken : accessSecret : users <- getArgs
     let oauth = newOAuth { oauthServerName     = "api.twitter.com"
-                         , oauthConsumerKey    = (pack $ args !! 0) 
-                         , oauthConsumerSecret = (pack $ args !! 1) }
-    let cred = newCredential (pack $ args !! 2) (pack $ args !! 3)
-    userStream (oauth,cred) (tail . tail . tail . tail $ args)
+                         , oauthConsumerKey    = pack consumerKey
+                         , oauthConsumerSecret = pack consumerSecret}
+    let cred = newCredential (pack $ accessToken) (pack $ accessSecret)
+    userStream (oauth,cred) users
