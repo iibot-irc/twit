@@ -8,7 +8,7 @@ cabal-version:       >=1.10
 
 executable twit
   main-is:             Main.hs
-  build-depends:    base >=4.6 && <4.7, conduit >= 1.2, text >= 1.2, time >= 1.4, aeson, 
+  build-depends:    base >=4.6 && <4.7, conduit >= 1.2, stm-conduit, text >= 1.2, time >= 1.4, aeson,
                     authenticate-oauth, http-conduit, bytestring, transformers, network
   ghc-options: -Wall
   default-language:    Haskell2010

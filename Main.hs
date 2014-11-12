@@ -10,23 +10,27 @@ import Web.Authenticate.OAuth
 import Data.Aeson
 import Data.Conduit
 import Data.Maybe
-import Data.Text (Text)
+import Data.Text as T (Text,concat)
+import Data.Text.IO as T (putStrLn)
 import Control.Applicative
+import Control.Monad(liftM,(<=<))
 
-data Tweet =
-  Tweet { text :: Text,
-          user :: Text
-          } deriving (Show)
+data StreamMessage =
+        Tweet { text :: Text,
+            username :: Text
+          }
+        deriving (Show)
 
 data User =
     User { name :: Text,
            id :: Int
          } deriving (Show)
 
-instance FromJSON Tweet where 
-    parseJSON (Object t) = 
-        Tweet <$> t .: "text" 
-              <*> ((t .: "user") >>= (.: "name"))
+instance FromJSON StreamMessage where
+    parseJSON (Object t) = do
+        tweetText <- t .: "text"
+        screenName <- (t .: "user") >>= (.: "screen_name")
+        return Tweet { text = tweetText, username = screenName}
 
 instance FromJSON User where
     parseJSON (Object t) = 
@@ -36,29 +40,30 @@ instance FromJSON User where
 userStream :: (OAuth, Credential) -> [String] -> IO ()
 userStream (oauth,cred) users = do
     userIds <- getUserIds (oauth,cred) users 
-    print userIds
-    print $ init $ concatMap (++",") userIds
-    req <- parseUrl $ "https://stream.twitter.com/1.1/statuses/filter.json?follow=" ++ concatMap (++",") userIds
+    followReq <- getFollowReq userIds
+    signedFReq <- signOAuth oauth cred followReq
     withManager $ \m -> do
-        signedreq <- signOAuth oauth cred req
-        response <- http signedreq m
-        responseBody response $$+- printStream
-
-getUserIds :: (OAuth, Credential) -> [String] -> IO [String]
-getUserIds (oauth,cred) users = do 
-    usersRes <- withSocketsDo $ do
-        req <- parseUrl $ "https://api.twitter.com/1.1/users/lookup.json?screen_name=" ++ concatMap (++",") users
-        signedreq <- signOAuth oauth cred req
-        withManager $ httpLbs signedreq
-    let usersBody = responseBody usersRes
-    return $ map (show . Main.id) $ maybe [] catMaybes (decode usersBody :: Maybe [Maybe User])
+        followResp <-  liftM responseBody $ http signedFReq m
+        followResp $$+- printStream
+    where
+            getFollowReq followIds = do
+                req <- parseUrl "https://stream.twitter.com/1.1/statuses/filter.json"
+                return $ setQueryString [("follow", Just (pack $ concatMap (++",") followIds))] req
+            getUserIds (oauth,cred) users = do
+                usersRes <- withSocketsDo $ do
+                    req <- parseUrl "https://api.twitter.com/1.1/users/lookup.json"
+                    let uidReq = setQueryString [("screen_name", Just (pack $ concatMap (++",") users))] req
+                    signedreq <- signOAuth oauth cred uidReq
+                    withManager $ httpLbs signedreq
+                let usersBody = responseBody usersRes
+                return $ map (show . Main.id) $ maybe [] catMaybes (decode usersBody :: Maybe [Maybe User])
 
 printStream =
     awaitForever $ \str-> do
-        let mTweet = decode (fromStrict str) :: Maybe Tweet
+        let mTweet = decode (fromStrict str) :: Maybe StreamMessage
         case mTweet of
-            Nothing -> return () 
-            Just tweet -> liftIO $ print tweet
+            Just Tweet { text = t , username = u} -> liftIO $ T.putStrLn $ T.concat ["\0336@@\033 ",u, ": ", t]
+            _ -> return ()
 
 main :: IO ()
 main = do
@@ -66,5 +71,5 @@ main = do
     let oauth = newOAuth { oauthServerName     = "api.twitter.com"
                          , oauthConsumerKey    = pack consumerKey
                          , oauthConsumerSecret = pack consumerSecret}
-    let cred = newCredential (pack $ accessToken) (pack $ accessSecret)
+    let cred = newCredential (pack accessToken) (pack accessSecret)
     userStream (oauth,cred) users
